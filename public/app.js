@@ -166,9 +166,10 @@ function syncProfile(b){
 }
 
 const logsCol = () => collection(db,'babies',babyId,'logs');
-function subscribeLogs(){
+// keep=true re-attaches the listener for the same baby without blanking the list
+function subscribeLogs(keep){
   if (unsubLogs) { unsubLogs(); unsubLogs = null; }
-  logs = [];
+  if (!keep) logs = [];
   if (!babyId) return;
   unsubLogs = onSnapshot(query(logsCol(), orderBy('start','desc'), limit(1000)), snap => {
     logs = snap.docs.map(d => ({id:d.id, ...d.data()}));
@@ -176,14 +177,28 @@ function subscribeLogs(){
   }, e => { console.error(e); showBanner(explain(e)); });
 }
 
+// Log writes update the screen straight away instead of waiting for the listener,
+// which can lag (or stall after the app was in the background). The server
+// promise only resolves once the write is acknowledged, so the double-tap lock
+// is released after a short delay rather than held until then.
+async function writeLog(apply, send){
+  if (busy) return; busy = true;
+  setTimeout(() => { busy = false; }, 600);
+  apply(); render();
+  try { await send(); showBanner(''); }
+  catch (e) { console.error(e); showBanner(explain(e)); subscribeLogs(true); }
+}
 function saveLog(id, data){
-  return write(async () => {
-    const body = {...data, by: me.uid, updatedAt: Date.now()};
-    if (id) await setDoc(doc(logsCol(), id), body); else await addDoc(logsCol(), body);
-  });
+  const ref = id ? doc(logsCol(), id) : doc(logsCol());
+  const body = {...data, by: me.uid, updatedAt: Date.now()};
+  return writeLog(() => {
+    logs = [{id: ref.id, ...body}, ...logs.filter(l => l.id !== ref.id)].sort((a,b) => b.start - a.start);
+  }, () => setDoc(ref, body));
 }
 function patchLog(l, patch){ const {id, ...rest} = l; return saveLog(id, {...rest, ...patch}); }
-function delLog(id){ return write(() => deleteDoc(doc(logsCol(), id))); }
+function delLog(id){
+  return writeLog(() => { logs = logs.filter(l => l.id !== id); }, () => deleteDoc(doc(logsCol(), id)));
+}
 
 function selectBaby(id){
   if (id === babyId && unsubLogs) return;
@@ -265,7 +280,6 @@ function render(){
     openFeed
       ? h('button',{class:'btn feed',onclick:()=>patchLog(openFeed,{end:Date.now()})}, 'Stop feeding')
       : h('div',{class:'feedbtns'},
-          h('button',{class:'btn',onclick:()=>saveLog(null,{kind:'feed',feedType:'breast',start:Date.now(),end:null})}, 'Breast'),
           h('button',{class:'btn',onclick:()=>openLogSheet({kind:'feed',feedType:'bottle',start:Date.now(),end:null})}, 'Bottle'),
           h('button',{class:'btn',onclick:()=>openLogSheet({kind:'feed',feedType:'solids',start:Date.now(),end:null})}, 'Solids')));
   main.append(h('div',{class:'status'}, sleepCard, feedCard));
@@ -412,13 +426,16 @@ function seg(options, value, onChange){
 
 function openLogSheet(entry){
   const isNew = !entry || !entry.id;
-  const st = {kind:'feed', feedType:'breast', start:Date.now(), end:null, amountMl:'', note:'', ...(entry||{})};
+  const st = {kind:'feed', feedType:'bottle', start:Date.now(), end:null, amountMl:'', note:'', ...(entry||{})};
   const body = h('div',{class:'stack'});
   const draw = () => {
     body.replaceChildren();
     if (isNew) body.append(seg([['sleep','Sleep'],['feed','Feed']], st.kind, v => { st.kind = v; draw(); }));
     if (st.kind === 'feed') {
-      body.append(seg([['breast','Breast'],['bottle','Bottle'],['solids','Solids']], st.feedType, v => { st.feedType = v; draw(); }));
+      // Breast is no longer offered; it only appears when editing an older breast entry
+      const types = [['bottle','Bottle'],['solids','Solids']];
+      if (!isNew && entry.feedType === 'breast') types.unshift(['breast','Breast']);
+      body.append(seg(types, st.feedType, v => { st.feedType = v; draw(); }));
       if (st.feedType === 'bottle') body.append(h('div',{class:'field'}, h('label',{class:'label',for:'f-ml'}, 'Amount (ml)'),
         h('input',{id:'f-ml',type:'number',inputmode:'numeric',min:'0',step:'5',value:st.amountMl||'',oninput:e=>st.amountMl=e.target.value})));
     }
@@ -532,5 +549,10 @@ function openAccountSheet(){
 $('#fab').addEventListener('click', () => openLogSheet(null));
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(); });
 setInterval(() => { if (!document.hidden && !$('#sheetRoot').firstChild) render(); }, 30000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) render(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  // listeners can go quiet while the app is in the background; re-attach to catch up
+  if (me && babyId) subscribeLogs(true);
+  render();
+});
 boot();
