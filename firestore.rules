@@ -1,0 +1,62 @@
+rules_version = '2';
+
+// Baby Days — who can see and change what.
+// A baby document lists its parents in `members` (Google account ids) and
+// pending invitations in `invites` (lower-case email addresses).
+// Only members can read or write a baby's logs.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function myEmail() { return request.auth.token.email.lower(); }
+    function verified() { return request.auth.token.email_verified == true; }
+    function babyData(babyId) {
+      return get(/databases/$(database)/documents/babies/$(babyId)).data;
+    }
+    function isMember(babyId) {
+      return signedIn() && request.auth.uid in babyData(babyId).members;
+    }
+
+    match /babies/{babyId} {
+      // Members see the baby; an invited person sees it so they can accept.
+      allow read: if signedIn() && (
+        request.auth.uid in resource.data.members
+        || (verified() && myEmail() in resource.data.invites)
+      );
+
+      // You can create a baby with only yourself as a member.
+      allow create: if signedIn()
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.members == [request.auth.uid];
+
+      allow update: if signedIn() && (
+        // Members can change the baby (name, birth date, invites, members).
+        request.auth.uid in resource.data.members
+
+        // An invited person can accept: add only themselves, remove their invite.
+        || (verified() && myEmail() in resource.data.invites
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['members', 'invites', 'memberInfo'])
+            && request.resource.data.members.toSet()
+                 == resource.data.members.toSet().union([request.auth.uid].toSet())
+            && !(myEmail() in request.resource.data.invites)
+            && request.resource.data.get('memberInfo', {})
+                 .diff(resource.data.get('memberInfo', {})).affectedKeys()
+                 .hasOnly([request.auth.uid]))
+
+        // An invited person can decline: remove only their own invite.
+        || (verified() && myEmail() in resource.data.invites
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['invites'])
+            && request.resource.data.invites.toSet()
+                 == resource.data.invites.toSet().difference([myEmail()].toSet()))
+      );
+
+      // Only the person who added the baby can delete it.
+      allow delete: if signedIn() && resource.data.createdBy == request.auth.uid;
+
+      match /logs/{logId} {
+        allow read, write: if isMember(babyId);
+      }
+    }
+  }
+}

@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Baby Days</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Baby Days">
+<meta name="theme-color" content="#eef1f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#10121b" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Figtree:wght@400;500;600;700&display=swap">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+
+/* Layout: one narrow phone column — live status first (sleep + feed), today's 24h ribbon, then the day-by-day log. Night-friendly. */
+:root{
+  --bg:#eef1f7; --surface:#ffffff; --surface-2:#f5f7fb; --line:#dbe0ec;
+  --fg:#1d2233; --muted:#646b80;
+  --sleep:#5b5fc7; --sleep-soft:#e3e4f8; --on-sleep:#ffffff;
+  --feed:#c9741c; --feed-soft:#fbead8; --on-feed:#ffffff;
+  --danger:#c23b3b;
+  --font-display:"Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
+  --font-body:"Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --r:16px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#10121b; --surface:#191c28; --surface-2:#212534; --line:#2c3144;
+  --fg:#e8eaf3; --muted:#959bb2;
+  --sleep:#8e92f0; --sleep-soft:#262a4a; --on-sleep:#10121b;
+  --feed:#eaa155; --feed-soft:#3a2a1a; --on-feed:#10121b;
+  --danger:#f07070; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#10121b; --surface:#191c28; --surface-2:#212534; --line:#2c3144;
+  --fg:#e8eaf3; --muted:#959bb2;
+  --sleep:#8e92f0; --sleep-soft:#262a4a; --on-sleep:#10121b;
+  --feed:#eaa155; --feed-soft:#3a2a1a; --on-feed:#10121b;
+  --danger:#f07070; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--font-body);font-size:15px;line-height:1.45;padding-inline:16px;padding-block:12px 96px}
+.wrap{max-width:560px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+h1,h2,h3{font-family:var(--font-display);margin:0;text-wrap:balance}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--sleep);outline-offset:2px}
+.tnum{font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+.label{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+header h1{font-size:26px;font-weight:700;letter-spacing:-.01em}
+.babies{display:flex;gap:6px;flex-wrap:wrap}
+.chip{padding:6px 12px;border-radius:999px;background:var(--surface);border:1px solid var(--line);font-weight:600;font-size:14px}
+.chip[aria-pressed="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.age{font-size:13px;color:var(--muted);margin-top:2px}
+
+.status{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:420px){.status{grid-template-columns:1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.card.sleep.active{background:var(--sleep-soft);border-color:var(--sleep)}
+.card.feed.active{background:var(--feed-soft);border-color:var(--feed)}
+.card .big{font-family:var(--font-display);font-size:30px;font-weight:700;line-height:1.1}
+.card .sub{font-size:13px;color:var(--muted)}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.dot.s{background:var(--sleep)}.dot.f{background:var(--feed)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:12px 14px;border-radius:12px;font-weight:700;font-size:15px;min-height:46px}
+.btn.sleep{background:var(--sleep);color:var(--on-sleep)}
+.btn.feed{background:var(--feed);color:var(--on-feed)}
+.btn.ghost{background:var(--surface-2);border:1px solid var(--line)}
+.btn.danger{color:var(--danger);background:transparent;border:1px solid var(--danger)}
+.btn:disabled{opacity:.5;cursor:default}
+.feedbtns{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.tabs{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);padding-block:4px}
+.tabs .seg button{padding:10px 6px;font-size:15px}
+.feedbtns .btn{padding:10px 4px;font-size:14px;min-height:44px;background:var(--feed-soft);color:var(--fg);border:1px solid var(--line)}
+.card.feed.active .feedbtns .btn{background:var(--surface)}
+
+.today{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;display:flex;flex-direction:column;gap:12px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.stat .v{font-family:var(--font-display);font-size:22px;font-weight:700}
+.ribbon{position:relative;height:30px;border-radius:8px;background:var(--surface-2);border:1px solid var(--line);overflow:hidden}
+.ribbon .blk{position:absolute;top:0;bottom:0;background:var(--sleep);opacity:.85}
+.ribbon .tick{position:absolute;top:4px;bottom:4px;width:3px;margin-left:-1px;border-radius:2px;background:var(--feed)}
+.ribbon .now{position:absolute;top:0;bottom:0;width:2px;background:var(--fg);opacity:.5}
+.hours{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}
+
+.trends{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;display:flex;flex-direction:column;gap:14px}
+.trends .head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.trends .seg{padding:2px}.trends .seg button{padding:6px 12px;font-size:13px}
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.tile{background:var(--surface-2);border-radius:12px;padding:12px;min-width:0}
+.tile .v{font-family:var(--font-display);font-size:22px;font-weight:700}
+.tile .k{font-size:13px;color:var(--muted)}
+.chart{display:flex;flex-direction:column;gap:6px}
+.chart .ttl{display:flex;justify-content:space-between;gap:8px;font-size:13px;font-weight:600}
+.chart .ttl span{font-weight:500;color:var(--muted)}
+.legend{display:flex;gap:12px;font-size:12px;color:var(--muted)}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.bars{position:relative;display:flex;align-items:flex-end;gap:3px;height:110px;border-bottom:1px solid var(--line);background:linear-gradient(var(--line),var(--line)) 0 50%/100% 1px no-repeat}
+.bars .col{flex:1;display:flex;flex-direction:column-reverse;min-width:0;height:100%}
+.bars .seg-n{background:var(--sleep);border-radius:0}
+.bars .seg-d{background:var(--sleep);opacity:.45;border-radius:3px 3px 0 0}
+.bars .seg-f{background:var(--feed);border-radius:3px 3px 0 0}
+.bars .col.today>*{opacity:.5}
+.bars .max{position:absolute;left:0;top:-2px;font-size:11px;color:var(--muted);background:var(--surface);padding-right:4px}
+.bars .mid{position:absolute;left:0;top:calc(50% - 8px);font-size:11px;color:var(--muted);background:var(--surface);padding-right:4px}
+.xlab{display:flex;gap:3px;font-size:10px;color:var(--muted)}
+.xlab span{flex:1;text-align:center;min-width:0;overflow:hidden}
+
+.empty-title{color:var(--fg);margin-bottom:6px}
+.empty p{margin:0 0 14px}
+.stack{display:flex;flex-direction:column;gap:14px}
+.note{font-size:13px;margin-top:-6px}
+.lg-n{background:var(--sleep)}.lg-d{background:var(--sleep);opacity:.45}
+.small{font-size:13px}
+.signin{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:28px 20px;display:flex;flex-direction:column;gap:14px;align-items:flex-start}
+.signin h2{font-size:22px}
+.signin p{margin:0;max-width:40ch}
+.btn.google{background:var(--fg);color:var(--bg);padding:12px 18px}
+.btn.google .g{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--bg);color:var(--fg);font-weight:800;font-size:13px}
+.invite{background:var(--sleep-soft);border:1px solid var(--sleep);border-radius:var(--r);padding:14px;display:flex;flex-direction:column;gap:10px}
+.people{display:flex;flex-direction:column;gap:2px;background:var(--surface-2);border-radius:12px;padding:6px}
+.person{display:flex;align-items:center;gap:10px;padding:8px}
+.person .pn{flex:1;min-width:0;overflow-wrap:anywhere;font-weight:600}
+.person .pn .small{font-weight:400}
+.who.initial,.me-av.initial{display:inline-grid;place-items:center;background:var(--sleep-soft);color:var(--sleep);font-weight:700;font-size:12px}
+.person .who{width:32px;height:32px}
+.me-btn{padding:0;border-radius:50%}
+.me-av{width:32px;height:32px;border-radius:50%;object-fit:cover;display:block}
+.link{font-weight:600;padding:6px}
+.danger-text{color:var(--danger)}
+.logs{display:flex;flex-direction:column;gap:14px}
+.day h3{font-size:15px;font-weight:700;display:flex;justify-content:space-between;gap:8px;margin-bottom:6px}
+.day h3 span{font-family:var(--font-body);font-weight:500;font-size:13px;color:var(--muted)}
+.rows{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.row{display:grid;grid-template-columns:4px 64px 1fr auto;gap:12px;align-items:center;padding:10px 12px 10px 0;width:100%;text-align:left;border-top:1px solid var(--line)}
+.row:first-child{border-top:0}
+.row .bar{align-self:stretch;border-radius:0 3px 3px 0}
+.row.sleep .bar{background:var(--sleep)}.row.feed .bar{background:var(--feed)}
+.row .t{font-weight:600}
+.row .d{min-width:0}
+.row .d b{font-weight:600}
+.row .d div{overflow-wrap:anywhere}
+.who{width:24px;height:24px;border-radius:50%;object-fit:cover}
+
+.fab{position:fixed;right:16px;bottom:calc(16px + env(safe-area-inset-bottom,0px));padding:14px 18px;border-radius:999px;background:var(--fg);color:var(--bg);font-weight:700;box-shadow:0 6px 20px rgba(0,0,0,.25)}
+.empty{background:var(--surface);border:1px dashed var(--line);border-radius:var(--r);padding:20px;text-align:center;color:var(--muted)}
+
+.sheet-bg{position:fixed;inset:0;background:rgba(10,12,20,.45);display:flex;align-items:flex-end;justify-content:center;z-index:10}
+.sheet{background:var(--surface);width:100%;max-width:560px;border-radius:20px 20px 0 0;padding:20px 16px calc(20px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:14px;max-height:92vh;overflow:auto}
+.sheet h2{font-size:20px}
+.field{display:flex;flex-direction:column;gap:6px}
+.field input,.field select,.field textarea{font:inherit;color:var(--fg);background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;width:100%;min-width:0}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.seg{display:flex;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:3px;gap:3px}
+.seg button{flex:1;padding:9px 6px;border-radius:9px;font-weight:600;font-size:14px}
+.seg button[aria-pressed="true"]{background:var(--surface);box-shadow:0 1px 3px rgba(0,0,0,.15)}
+.actions{display:flex;gap:10px;flex-wrap:wrap}
+.actions .btn{flex:1}
+.msg{font-size:13px;color:var(--danger)}
+.banner{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:14px}
+@media (prefers-reduced-motion:no-preference){.sheet{animation:up .18s ease-out}@keyframes up{from{transform:translateY(24px);opacity:.6}}}
+
+</style>
+</head>
+<body>
+<div class="wrap" id="app">
+  <header>
+    <div>
+      <h1 id="babyName">Baby Days</h1>
+      <div class="age" id="babyAge">Sleep and feeding log, shared between parents</div>
+    </div>
+    <div class="babies" id="babies"></div>
+  </header>
+  <div id="banner" class="banner" hidden></div>
+  <div id="main"><div class="empty">Loading…</div></div>
+</div>
+<button class="fab" id="fab" hidden>+ Add entry</button>
+<div id="sheetRoot"></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
