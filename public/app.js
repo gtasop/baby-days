@@ -66,7 +66,7 @@ const MED_ICONS = [
 ];
 const medIcon = key => {
   const el = h('span',{class:'ic','aria-hidden':'true'});
-  el.innerHTML = '<svg viewBox="0 0 24 24">' + (MED_ICONS.find(i => i[0]===key) || MED_ICONS[0])[2] + '</svg>';
+  el.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + (MED_ICONS.find(i => i[0]===key) || MED_ICONS[0])[2] + '</svg>';
   return el;
 };
 const isEmail = s => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
