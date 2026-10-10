@@ -13,7 +13,6 @@ the other sees it on their phone straight away.
 - **Sleep card.** Shows whether the baby is asleep or awake, and for how long.
   Tap **Start sleep** when the baby falls asleep and **Woke up** when they wake.
 - **Feed card.** Shows how long ago the last feed was and what kind it was.
-  - **Breast** starts a timer; tap **Stop feeding** when done.
   - **Bottle** asks for the amount in ml.
   - **Solids** logs a solids meal.
 - **Last 24 hours.** Total sleep, number of feeds and bottle ml, with a timeline
@@ -73,7 +72,6 @@ who logged what. Nothing else about your Google account is stored.
 | App | One page of plain HTML, CSS and JavaScript (`public/`), no build step |
 | Sign-in | Firebase Authentication with Google |
 | Data | Cloud Firestore, live updates and an offline cache |
-| Hosting | Firebase Hosting |
 
 ```
 public/
@@ -82,7 +80,7 @@ public/
   manifest.webmanifest   home-screen install details
   icon-*.png             app icons
 firestore.rules          who can read and write what
-firebase.json            hosting and rules deployment
+firebase.json            Firebase project settings
 ```
 
 ### Data model
@@ -97,7 +95,7 @@ babies/{babyId}
 babies/{babyId}/logs/{logId}
   kind:     "sleep" | "feed"
   start, end              milliseconds; end is null while a timer runs
-  feedType: "breast" | "bottle" | "solids"
+  feedType: "bottle" | "solids"   ("breast" on older entries)
   amountMl                bottle feeds only
   note, by (uid), updatedAt
 ```
@@ -105,32 +103,9 @@ babies/{babyId}/logs/{logId}
 ## Setting it up
 
 Everything runs on Firebase's free Spark plan, which is far more than two parents
-need. It takes about 15 minutes, once.
+need.
 
-### 1. Create a Firebase project
-
-1. Go to <https://console.firebase.google.com>, click **Create a project** and note
-   its **project ID**, for example `baby-days-4f2a1`. Google Analytics can be off.
-2. **Build → Authentication → Get started → Google**: switch it on, choose a support
-   email and save.
-3. **Build → Firestore Database → Create database**: pick a European location (for
-   example `europe-west4`, Netherlands) and start in production mode.
-4. **Project settings → Your apps → `</>`**: register a web app called `Baby Days`
-   and tick **Also set up Firebase Hosting**.
-
-### 2. Deploy
-
-With [Node.js](https://nodejs.org) installed, run this in the repository folder:
-
-```bash
-npx firebase-tools login
-npx firebase-tools deploy --project YOUR-PROJECT-ID
-```
-
-This publishes the app and the security rules. The app reads its Firebase settings
-from Firebase Hosting automatically, so there's no config file to edit.
-
-### 3. Install on your phones
+### Install on your phones
 
 1. In Safari, open `https://YOUR-PROJECT-ID.firebaseapp.com`. Use the
    `.firebaseapp.com` address rather than `.web.app`, because Google sign-in on
@@ -142,5 +117,5 @@ from Firebase Hosting automatically, so there's no config file to edit.
 
 ## Making changes
 
-Edit the files in `public/` and run the deploy command again. Phones load the new
-version the next time the app is opened.
+Edit the files in `public/` and publish them again. Phones load the new version the
+next time the app is opened.
