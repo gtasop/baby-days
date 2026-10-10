@@ -9,6 +9,20 @@ import {
   orderBy, limit, arrayUnion, arrayRemove, deleteField
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
+// The page carries the styles and app.js the behaviour. A phone holding a stale cached page next to a
+// fresh app.js renders unstyled controls, so refetch the page and reload once when the versions differ.
+// Bump this together with <meta name="app-version"> in index.html whenever their markup or styles change together.
+const APP_VERSION = '2';
+{
+  const pageVersion = document.querySelector('meta[name="app-version"]')?.content;
+  let tried = null;
+  try { tried = sessionStorage.getItem('reloadedFor'); } catch {}
+  if (pageVersion !== APP_VERSION && tried !== APP_VERSION) {
+    try { sessionStorage.setItem('reloadedFor', APP_VERSION); } catch {}
+    fetch(location.pathname, { cache: 'reload' }).catch(() => {}).finally(() => location.reload());
+  }
+}
+
 // ---------- helpers ----------
 const $ = (s, el=document) => el.querySelector(s);
 const h = (tag, attrs={}, ...kids) => {
