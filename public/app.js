@@ -32,8 +32,6 @@ const hm = t => { const d = new Date(t); return pad(d.getHours())+':'+pad(d.getM
 const dur = ms => { ms = Math.max(0, ms); const m = Math.round(ms/MIN); if (m < 60) return m+'m'; const hh = Math.floor(m/60), mm = m%60; return hh+'h'+(mm? ' '+pad(mm)+'m':''); };
 const ago = t => { const ms = Date.now()-t; if (ms < MIN) return 'just now'; return dur(ms)+' ago'; };
 const startOfDay = t => { const d = new Date(t); d.setHours(0,0,0,0); return d.getTime(); };
-const toLocalInput = t => { const d = new Date(t); return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes()); };
-const fromLocalInput = s => s ? new Date(s).getTime() : null;
 const dayLabel = t => {
   const s = startOfDay(t), today = startOfDay(Date.now());
   if (s === today) return 'Today';
@@ -54,6 +52,22 @@ const feedText = l => {
   if (l.feedType === 'bottle') return 'Bottle' + (l.amountMl ? ' · '+l.amountMl+' ml' : '');
   if (l.feedType === 'solids') return 'Solids';
   return 'Breast';
+};
+// Medicine icons: inline SVG paths on a 24x24 grid, stroked with currentColor
+const MED_ICONS = [
+  ['pill','Pill','<path d="M10.5 20.5 3.5 13.5a5 5 0 0 1 7-7l7 7a5 5 0 0 1-7 7Z"/><path d="m8.5 8.5 7 7"/>'],
+  ['tablet','Tablet','<circle cx="12" cy="12" r="8"/><path d="M8 12h8"/>'],
+  ['syrup','Syrup','<path d="M10 2h4v3h-4z"/><path d="M9 5h6v2l2 3v10a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V10l2-3V5Z"/><path d="M7 14h10"/>'],
+  ['spoon','Spoon','<ellipse cx="12" cy="7" rx="4" ry="5"/><path d="M12 12v9"/>'],
+  ['drops','Drops','<path d="M12 3s-6 7-6 11a6 6 0 0 0 12 0c0-4-6-11-6-11Z"/>'],
+  ['cream','Cream','<path d="M6 3h12l-2 12H8L6 3Z"/><path d="M6.5 6h11"/><rect x="10" y="15" width="4" height="5" rx="1"/>'],
+  ['syringe','Syringe','<path d="m18 2 4 4"/><path d="m17 7 3-3"/><path d="M19 9 8.7 19.3c-1 1-2.5 1-3.4 0l-.6-.6c-1-1-1-2.5 0-3.4L15 5"/><path d="m9 11 4 4"/><path d="m5 19-3 3"/><path d="m14 4 6 6"/>'],
+  ['plaster','Plaster','<rect x="1.5" y="8" width="21" height="8" rx="4" transform="rotate(-45 12 12)"/><path d="M10.5 10.5h.01M13.5 10.5h.01M10.5 13.5h.01M13.5 13.5h.01"/>'],
+];
+const medIcon = key => {
+  const el = h('span',{class:'ic','aria-hidden':'true'});
+  el.innerHTML = '<svg viewBox="0 0 24 24">' + (MED_ICONS.find(i => i[0]===key) || MED_ICONS[0])[2] + '</svg>';
+  return el;
 };
 const isEmail = s => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 const standalone = () => window.navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
@@ -200,6 +214,25 @@ function delLog(id){
   return writeLog(() => { logs = logs.filter(l => l.id !== id); }, () => deleteDoc(doc(logsCol(), id)));
 }
 
+// Saved medicines live on the baby, so both parents share the list. Each medicine
+// log also copies the name and icon, so old entries survive a removed medicine.
+function addMedicine(name, icon){
+  const baby = babies.find(b => b.id === babyId);
+  const list = baby.medicines || [];
+  const same = list.find(m => m.name.toLowerCase() === name.toLowerCase());
+  if (same) return same;
+  const m = {id: doc(logsCol()).id, name, icon};
+  baby.medicines = [...list, m];
+  updateDoc(doc(db,'babies',babyId), {medicines: arrayUnion(m)}).catch(e => { console.error(e); showBanner(explain(e)); });
+  return m;
+}
+function removeMedicine(id){
+  const baby = babies.find(b => b.id === babyId);
+  baby.medicines = (baby.medicines || []).filter(m => m.id !== id);
+  updateDoc(doc(db,'babies',babyId), {medicines: baby.medicines}).catch(e => { console.error(e); showBanner(explain(e)); });
+  render();
+}
+
 function selectBaby(id){
   if (id === babyId && unsubLogs) return;
   babyId = id; store.set('bd.baby', id || '');
@@ -252,6 +285,7 @@ function render(){
   const now = Date.now();
   const sleeps = logs.filter(l => l.kind==='sleep');
   const feeds = logs.filter(l => l.kind==='feed');
+  const meds = logs.filter(l => l.kind==='med');
 
   main.append(h('nav',{class:'tabs'}, seg([['today','Today'],['trends','Trends']], tab, v => { tab = v; store.set('bd.tab', v); render(); window.scrollTo(0,0); })));
   if (tab === 'trends') {
@@ -281,8 +315,17 @@ function render(){
       ? h('button',{class:'btn feed',onclick:()=>patchLog(openFeed,{end:Date.now()})}, 'Stop feeding')
       : h('div',{class:'feedbtns'},
           h('button',{class:'btn',onclick:()=>openLogSheet({kind:'feed',feedType:'bottle',start:Date.now(),end:null})}, 'Bottle'),
-          h('button',{class:'btn',onclick:()=>openLogSheet({kind:'feed',feedType:'solids',start:Date.now(),end:null})}, 'Solids')));
-  main.append(h('div',{class:'status'}, sleepCard, feedCard));
+          h('button',{class:'btn solids',onclick:()=>openLogSheet({kind:'feed',feedType:'solids',start:Date.now(),end:null})}, 'Solids')));
+  const savedMeds = baby.medicines || [];
+  const lastMed = meds[0];
+  const medCard = h('div',{class:'card med'},
+    h('div',{class:'top'},
+      h('div',{class:'label'}, h('span',{class:'dot m'}), 'Medicine'),
+      h('div',{class:'sub'}, lastMed ? 'Last: '+(lastMed.medName||'Medicine')+', '+ago(lastMed.start) : 'None logged yet')),
+    h('div',{class:'medbtns'},
+      savedMeds.map(m => h('button',{class:'btn',onclick:()=>openLogSheet({kind:'med',medId:m.id,start:Date.now(),end:null})}, medIcon(m.icon), m.name)),
+      h('button',{class:'btn add',onclick:()=>openLogSheet({kind:'med',start:Date.now(),end:null,addingMed:true})}, savedMeds.length ? '+ New' : '+ Add a medicine')));
+  main.append(h('div',{class:'status'}, sleepCard, feedCard, medCard));
 
   // last 24h
   const from = now - DAY;
@@ -295,7 +338,8 @@ function render(){
     ribbon.append(h('div',{class:'blk',style:`left:${(s-from)/DAY*100}%;width:${Math.max(.4,(e-s)/DAY*100)}%`}));
   });
   const recentFeeds = feeds.filter(l => l.start >= from);
-  recentFeeds.forEach(l => ribbon.append(h('div',{class:'tick',style:`left:${(l.start-from)/DAY*100}%`})));
+  recentFeeds.forEach(l => ribbon.append(h('div',{class:'tick'+(l.feedType==='solids'?' solids':''),style:`left:${(l.start-from)/DAY*100}%`})));
+  meds.filter(l => l.start >= from).forEach(l => ribbon.append(h('div',{class:'tick med',style:`left:${(l.start-from)/DAY*100}%`})));
   ribbon.append(h('div',{class:'now',style:'right:0'}));
   const ml = recentFeeds.filter(l => l.feedType==='bottle').reduce((a,l)=>a+(+l.amountMl||0),0);
   const hours = h('div',{class:'hours tnum'});
@@ -321,18 +365,21 @@ function render(){
     if (shown > 14) break; shown++;
     const dSleep = items.filter(l=>l.kind==='sleep').reduce((a,l)=>a+((l.end||now)-l.start),0);
     const dFeeds = items.filter(l=>l.kind==='feed').length;
+    const dMeds = items.filter(l=>l.kind==='med').length;
     const rows = h('div',{class:'rows'});
     items.forEach(l => {
       const what = l.kind==='sleep'
         ? h('div',{}, h('b',{}, l.end ? 'Slept '+dur(l.end-l.start) : 'Sleeping now'), l.end ? h('span',{class:'muted'}, ' · until '+hm(l.end)) : null)
+        : l.kind==='med'
+        ? h('div',{class:'medline'}, medIcon(l.medIcon), h('b',{}, l.medName || 'Medicine'))
         : h('div',{}, h('b',{}, feedText(l)), l.end && l.feedType==='breast' ? h('span',{class:'muted'}, ' · '+dur(l.end-l.start)) : (!l.end && l.feedType==='breast' ? h('span',{class:'muted'}, ' · in progress') : null));
-      rows.append(h('button',{class:'row '+l.kind,onclick:()=>openLogSheet(l),'aria-label':'Edit entry'},
+      rows.append(h('button',{class:'row '+l.kind+(l.feedType==='solids'?' solids':''),onclick:()=>openLogSheet(l),'aria-label':'Edit entry'},
         h('span',{class:'bar'}),
         h('span',{class:'t tnum'}, hm(l.start)),
         h('div',{class:'d'}, what, l.note ? h('div',{class:'muted'}, l.note) : null),
         people[l.by] ? avatar(people[l.by]) : h('span')));
     });
-    list.append(h('div',{class:'day'}, h('h3',{}, dayLabel(+k), h('span',{class:'tnum'}, dur(dSleep)+' sleep · '+dFeeds+' feeds')), rows));
+    list.append(h('div',{class:'day'}, h('h3',{}, dayLabel(+k), h('span',{class:'tnum'}, dur(dSleep)+' sleep · '+dFeeds+' feeds'+(dMeds ? ' · '+dMeds+' med'+(dMeds>1?'s':'') : ''))), rows));
   }
   main.append(list);
 }
@@ -424,13 +471,82 @@ function seg(options, value, onChange){
   draw(value); return wrap;
 }
 
+// One scrolling column of a time wheel (hours or minutes) that snaps to the middle row.
+const WHEEL_ROW = 34;
+function wheelCol(count, value, label, onPick){
+  const items = Array.from({length: count}, (_, i) => h('div',{onclick:()=>col.scrollTo({top: i*WHEEL_ROW, behavior:'smooth'})}, pad(i)));
+  const col = h('div',{class:'col',tabindex:'0',role:'spinbutton','aria-label':label,'aria-valuemin':'0','aria-valuemax':String(count-1)}, items);
+  let cur = -1, timer;
+  const mark = i => {
+    if (i === cur) return;
+    items[cur]?.classList.remove('on'); items[i].classList.add('on'); cur = i;
+    col.setAttribute('aria-valuenow', i); col.setAttribute('aria-valuetext', pad(i));
+  };
+  // highlight live while scrolling, report once the wheel settles
+  col.addEventListener('scroll', () => {
+    mark(Math.min(count-1, Math.max(0, Math.round(col.scrollTop / WHEEL_ROW))));
+    clearTimeout(timer); timer = setTimeout(() => onPick(cur), 120);
+  });
+  col.addEventListener('keydown', e => {
+    const d = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0;
+    if (!d) return;
+    e.preventDefault(); col.scrollTo({top: Math.min(count-1, Math.max(0, cur+d)) * WHEEL_ROW, behavior:'smooth'});
+  });
+  mark(value);
+  // scrollTop only sticks once the column is in the page
+  requestAnimationFrame(() => { col.scrollTop = value * WHEEL_ROW; });
+  return col;
+}
+
+// Day carousel (‹ Today ›) plus an hour/minute wheel, instead of a full calendar picker.
+// value may be null (e.g. no end time yet); the day then defaults to fallback's day,
+// and clearable fields offer Set time / Clear.
+function dateTimeInput(id, value, fallback, onChange, clearable){
+  let day = startOfDay(value || fallback || Date.now());
+  let time = value ? hm(value) : '';
+  const emit = () => {
+    if (!time) return onChange(null);
+    const [hh, mm] = time.split(':').map(Number);
+    const d = new Date(day); d.setHours(hh, mm, 0, 0); onChange(d.getTime());
+  };
+  const label = h('span',{'aria-live':'polite'});
+  const prev = h('button',{type:'button','aria-label':'Previous day',onclick:()=>step(-1)}, '‹');
+  const next = h('button',{type:'button','aria-label':'Next day',onclick:()=>step(1)}, '›');
+  const show = () => { label.textContent = day >= startOfDay(Date.now()) - DAY ? dayLabel(day) : new Date(day).toLocaleDateString(undefined, {weekday:'short', day:'numeric', month:'short'}); next.disabled = day >= startOfDay(Date.now()); };
+  // step via noon so DST-shortened/lengthened days don't skip or repeat
+  const step = n => { day = startOfDay(day + 12*HOUR + n*DAY); show(); emit(); };
+  show();
+  const timeBox = h('div',{class:'dt'});
+  const drawTime = () => {
+    if (!time) {
+      timeBox.replaceChildren(h('button',{type:'button',id,class:'btn ghost',onclick:()=>{ time = hm(Date.now()); emit(); drawTime(); }}, 'Set time'));
+      return;
+    }
+    const [hh, mm] = time.split(':').map(Number);
+    timeBox.replaceChildren(
+      h('div',{class:'wheel',id,role:'group'},
+        wheelCol(24, hh, 'Hour', v => { time = pad(v)+time.slice(2); emit(); }),
+        h('span',{class:'sep','aria-hidden':'true'}, ':'),
+        wheelCol(60, mm, 'Minute', v => { time = time.slice(0,3)+pad(v); emit(); })),
+      ...(clearable ? [h('button',{type:'button',class:'linkbtn clear',onclick:()=>{ time = ''; emit(); drawTime(); }}, 'Clear time')] : []));
+  };
+  drawTime();
+  return h('div',{class:'dt'}, h('div',{class:'daypick'}, prev, label, next), timeBox);
+}
+
 function openLogSheet(entry){
   const isNew = !entry || !entry.id;
-  const st = {kind:'feed', feedType:'bottle', start:Date.now(), end:null, amountMl:'', note:'', ...(entry||{})};
+  const st = {kind:'feed', feedType:'bottle', start:Date.now(), end:null, amountMl:'', note:'', addingMed:false, newName:'', newIcon:'pill', ...(entry||{})};
+  // saved medicines, plus this entry's own medicine if it was removed from the list since
+  const medOptions = () => {
+    const list = babies.find(b => b.id === babyId)?.medicines || [];
+    return entry && entry.medId && !list.some(m => m.id === entry.medId)
+      ? [...list, {id: entry.medId, name: entry.medName || 'Medicine', icon: entry.medIcon, removed: true}] : list;
+  };
   const body = h('div',{class:'stack'});
   const draw = () => {
     body.replaceChildren();
-    if (isNew) body.append(seg([['sleep','Sleep'],['feed','Feed']], st.kind, v => { st.kind = v; draw(); }));
+    if (isNew) body.append(seg([['sleep','Sleep'],['feed','Feed'],['med','Medicine']], st.kind, v => { st.kind = v; draw(); }));
     if (st.kind === 'feed') {
       // Breast is no longer offered; it only appears when editing an older breast entry
       const types = [['bottle','Bottle'],['solids','Solids']];
@@ -439,14 +555,30 @@ function openLogSheet(entry){
       if (st.feedType === 'bottle') body.append(h('div',{class:'field'}, h('label',{class:'label',for:'f-ml'}, 'Amount (ml)'),
         h('input',{id:'f-ml',type:'number',inputmode:'numeric',min:'0',step:'5',value:st.amountMl||'',oninput:e=>st.amountMl=e.target.value})));
     }
+    if (st.kind === 'med') {
+      const saved = medOptions();
+      if (!saved.length) st.addingMed = true;
+      const picked = !st.addingMed && saved.find(m => m.id === st.medId);
+      if (saved.length) body.append(h('div',{class:'field'}, h('div',{class:'label'}, 'Medicine'),
+        h('div',{class:'chips'},
+          saved.map(m => h('button',{type:'button','aria-pressed':String(picked===m),onclick:()=>{ st.medId = m.id; st.addingMed = false; draw(); }}, medIcon(m.icon), m.name)),
+          h('button',{type:'button','aria-pressed':String(st.addingMed),onclick:()=>{ st.addingMed = true; draw(); }}, '+ New')),
+        picked && !picked.removed ? h('button',{type:'button',class:'linkbtn',onclick:()=>{ removeMedicine(picked.id); st.medId = null; draw(); }}, 'Remove '+picked.name+' from saved medicines') : null));
+      if (st.addingMed) {
+        body.append(h('div',{class:'field'}, h('label',{class:'label',for:'m-name'}, 'New medicine'),
+          h('input',{id:'m-name',type:'text',placeholder:'Name, e.g. Paracetamol',value:st.newName,oninput:e=>st.newName=e.target.value})));
+        body.append(h('div',{class:'field'}, h('div',{class:'label'}, 'Icon'),
+          h('div',{class:'icons'}, MED_ICONS.map(([k,label]) => h('button',{type:'button','aria-pressed':String(st.newIcon===k),onclick:()=>{ st.newIcon = k; draw(); }}, medIcon(k), label)))));
+      }
+    }
     const showEnd = st.kind === 'sleep' || st.feedType === 'breast';
     body.append(h('div',{class:showEnd?'two':''},
-      h('div',{class:'field'}, h('label',{class:'label',for:'f-start'}, st.kind==='sleep'?'Fell asleep':'Started'),
-        h('input',{id:'f-start',type:'datetime-local',value:toLocalInput(st.start),onchange:e=>st.start=fromLocalInput(e.target.value)})),
+      h('div',{class:'field'}, h('label',{class:'label',for:'f-start'}, st.kind==='sleep'?'Fell asleep':st.kind==='med'?'Given':'Started'),
+        dateTimeInput('f-start', st.start, st.start, v => st.start = v)),
       showEnd ? h('div',{class:'field'}, h('label',{class:'label',for:'f-end'}, st.kind==='sleep'?'Woke up':'Ended'),
-        h('input',{id:'f-end',type:'datetime-local',value:st.end?toLocalInput(st.end):'',onchange:e=>st.end=fromLocalInput(e.target.value)})) : null));
+        dateTimeInput('f-end', st.end, st.start, v => st.end = v, true)) : null));
     body.append(h('div',{class:'field'}, h('label',{class:'label',for:'f-note'}, 'Note'),
-      h('input',{id:'f-note',type:'text',placeholder:'Optional',value:st.note||'',oninput:e=>st.note=e.target.value})));
+      h('input',{id:'f-note',type:'text',placeholder:st.kind==='med'?'Optional, e.g. dose':'Optional',value:st.note||'',oninput:e=>st.note=e.target.value})));
   };
   draw();
   const msg = h('div',{class:'msg'});
@@ -456,6 +588,16 @@ function openLogSheet(entry){
     if (showEnd && st.end && st.end < st.start) { msg.textContent = 'The end time is before the start time.'; return; }
     const data = {kind:st.kind, start:st.start, end: showEnd ? (st.end||null) : st.start, note: (st.note||'').trim()};
     if (st.kind === 'feed') { data.feedType = st.feedType; if (st.feedType==='bottle') data.amountMl = Number(st.amountMl)||0; }
+    if (st.kind === 'med') {
+      let m;
+      if (st.addingMed) {
+        const name = st.newName.trim();
+        if (!name) { msg.textContent = 'Enter a name for the medicine.'; return; }
+        m = addMedicine(name, st.newIcon);
+      } else m = medOptions().find(x => x.id === st.medId);
+      if (!m) { msg.textContent = 'Choose a medicine.'; return; }
+      Object.assign(data, {medId: m.id, medName: m.name, medIcon: m.icon});
+    }
     closeSheet(); await saveLog(isNew ? null : st.id, data);
   };
   let confirmDel = false;

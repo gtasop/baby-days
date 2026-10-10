@@ -15,12 +15,16 @@ the other sees it on their phone straight away.
 - **Feed card.** Shows how long ago the last feed was and what kind it was.
   - **Bottle** asks for the amount in ml.
   - **Solids** logs a solids meal.
+- **Medicine card.** Shows the last medicine given and when, with a button for
+  each saved medicine. Tap **+ Add a medicine** (or **+ New**) to save a new one
+  with a name and an icon (pill, tablet, syrup, spoon, drops, cream, syringe,
+  plaster). Saved medicines are shared between both parents.
 - **Last 24 hours.** Total sleep, number of feeds and bottle ml, with a timeline
-  bar showing sleep blocks and feed times across the day.
+  bar showing sleep blocks, feed times and medicine times across the day.
 - **Log.** Every entry, grouped by day with a daily total of sleep and feeds.
   Each entry shows the profile photo of the parent who logged it. Tap an entry
   to edit its times, add a note or delete it.
-- **+ Add entry.** Log a sleep or feed after the fact, with start and end times.
+- **+ Add entry.** Log a sleep, feed or medicine after the fact, with start and end times.
 
 Timers are shared, so one parent can start a nap and the other can end it.
 
@@ -91,12 +95,15 @@ babies/{babyId}
   members:    [uid, ...]                 people who can see this baby
   invites:    [email, ...]               pending invitations (lower case)
   memberInfo: { uid: { name, photo } }   shown next to log entries
+  medicines:  [{ id, name, icon }]       saved medicines
 
 babies/{babyId}/logs/{logId}
-  kind:     "sleep" | "feed"
+  kind:     "sleep" | "feed" | "med"
   start, end              milliseconds; end is null while a timer runs
   feedType: "bottle" | "solids"   ("breast" on older entries)
   amountMl                bottle feeds only
+  medId, medName, medIcon medicine entries; name and icon are copied so the
+                          entry keeps them if the medicine is removed
   note, by (uid), updatedAt
 ```
 
