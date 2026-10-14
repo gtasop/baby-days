@@ -12,7 +12,7 @@ import {
 // The page carries the styles and app.js the behaviour. A phone holding a stale cached page next to a
 // fresh app.js renders unstyled controls, so refetch the page and reload once when the versions differ.
 // Bump this together with <meta name="app-version"> in index.html whenever their markup or styles change together.
-const APP_VERSION = '3';
+const APP_VERSION = '4';
 {
   const pageVersion = document.querySelector('meta[name="app-version"]')?.content;
   let tried = null;
@@ -90,7 +90,8 @@ const isIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.p
 // ---------- state ----------
 let auth, db, me = null;
 let babies = [], invites = [], babyId = store.get('bd.baby'), logs = [];
-let unsubBabies = null, unsubInvites = null, unsubLogs = null;
+let unsubBabies = null, unsubInvites = null, unsubLogs = null, unsubPhoto = null;
+let photo = null, heroSrc = ''; // the selected baby's banner photo, as a data URL
 let busy = false;
 let range = +(store.get('bd.range')) === 30 ? 30 : 7;
 let tab = store.get('bd.tab') === 'trends' ? 'trends' : 'today';
@@ -138,6 +139,7 @@ async function boot(){
 
 function showSignIn(err){
   $('#fab').hidden = true;
+  setHero('');
   $('#babies').replaceChildren();
   $('#babyName').textContent = 'Baby Days';
   $('#babyAge').textContent = 'Sleep and feeding log, shared between parents';
@@ -163,9 +165,9 @@ async function signIn(){
 
 function stopAll(){
   stopWeekSub();
-  [unsubBabies, unsubInvites, unsubLogs].forEach(u => u && u());
-  unsubBabies = unsubInvites = unsubLogs = null;
-  babies = []; invites = []; logs = [];
+  [unsubBabies, unsubInvites, unsubLogs, unsubPhoto].forEach(u => u && u());
+  unsubBabies = unsubInvites = unsubLogs = unsubPhoto = null;
+  babies = []; invites = []; logs = []; photo = null;
 }
 
 function startData(){
@@ -196,15 +198,51 @@ function syncProfile(b){
 }
 
 const logsCol = () => collection(db,'babies',babyId,'logs');
-// keep=true re-attaches the listener for the same baby without blanking the list
+// The photo sits in its own document so the baby list stays small to sync.
+const photoRef = id => doc(db,'babies',id,'photo','main');
+// Listens to the selected baby's logs and photo.
+// keep=true re-attaches the listeners for the same baby without blanking the screen
 function subscribeLogs(keep){
   if (unsubLogs) { unsubLogs(); unsubLogs = null; }
-  if (!keep) logs = [];
+  if (unsubPhoto) { unsubPhoto(); unsubPhoto = null; }
+  if (!keep) { logs = []; photo = null; }
   if (!babyId) return;
   unsubLogs = onSnapshot(query(logsCol(), orderBy('start','desc'), limit(LOG_LIMIT)), snap => {
     logs = snap.docs.map(d => ({id:d.id, ...d.data()}));
     render();
   }, e => { console.error(e); showBanner(explain(e)); });
+  unsubPhoto = onSnapshot(photoRef(babyId), snap => {
+    const src = snap.exists() && snap.data().src;
+    photo = typeof src === 'string' && src.startsWith('data:image/jpeg;base64,') ? src : null;
+    render();
+  }, e => console.warn('photo', e));
+}
+
+// Shrinks a picked photo to a JPEG data URL small enough for a Firestore document (1 MB limit).
+function shrinkPhoto(file, max=1400){
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const k = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.naturalWidth*k); c.height = Math.round(img.naturalHeight*k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      let q = .82, out = c.toDataURL('image/jpeg', q);
+      while (out.length > 700000 && q > .4) { q -= .1; out = c.toDataURL('image/jpeg', q); }
+      resolve(out);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('unreadable image')); };
+    img.src = url;
+  });
+}
+function setHero(src){
+  if (src === heroSrc) return;
+  heroSrc = src;
+  const header = $('header');
+  header.classList.toggle('hero', !!src);
+  header.style.backgroundImage = src ? `linear-gradient(to top, rgba(0,0,0,.62), rgba(0,0,0,0) 70%), url("${src}")` : '';
 }
 
 // Log writes update the screen straight away instead of waiting for the listener,
@@ -274,6 +312,7 @@ function render(){
   bWrap.append(h('button',{class:'me-btn',onclick:openAccountSheet,'aria-label':'Account'}, avatar(me,'me-av')));
   $('#babyName').textContent = baby ? baby.name : 'Baby Days';
   $('#babyAge').textContent = baby ? (ageText(baby.born) || 'Sleep and feeding log') : 'Sleep and feeding log, shared between parents';
+  setHero(baby && photo || '');
   $('#fab').hidden = !baby || tab !== 'today';
 
   const main = $('#main'); main.replaceChildren();
@@ -720,11 +759,28 @@ function openLogSheet(entry){
 }
 
 function openBabySheet(baby){
-  const st = {name: baby?.name || '', born: baby?.born || ''};
+  const st = {name: baby?.name || '', born: baby?.born || '', photo: baby && baby.id === babyId ? photo : null, photoChanged: false};
   const msg = h('div',{class:'msg'});
+  const fileIn = h('input',{type:'file',accept:'image/*',hidden:true,onchange:async e=>{
+    const f = e.target.files[0]; e.target.value = '';
+    if (!f) return;
+    msg.textContent = '';
+    try { st.photo = await shrinkPhoto(f); st.photoChanged = true; drawPhoto(); }
+    catch { msg.textContent = 'Couldn’t read that photo. Try a JPEG or PNG.'; }
+  }});
+  const photoBox = h('div',{class:'photo-pick'});
+  const drawPhoto = () => photoBox.replaceChildren(
+    st.photo ? h('img',{src:st.photo,alt:'Banner photo preview'}) : h('div',{class:'muted small'}, 'Shown as a banner behind the name.'),
+    h('div',{class:'actions'},
+      h('button',{type:'button',class:'btn ghost',onclick:()=>fileIn.click()}, st.photo ? 'Change photo' : 'Choose photo'),
+      st.photo ? h('button',{type:'button',class:'btn ghost',onclick:()=>{ st.photo = null; st.photoChanged = true; drawPhoto(); }}, 'Remove') : null),
+    fileIn);
+  drawPhoto();
+  const savePhoto = id => st.photo ? setDoc(photoRef(id), {src: st.photo, by: me.uid, updatedAt: Date.now()}) : deleteDoc(photoRef(id));
   sheet(h('h2',{}, baby ? 'Edit baby' : 'Add baby'),
     h('div',{class:'field'}, h('label',{class:'label',for:'b-name'}, 'Name'), h('input',{id:'b-name',type:'text',value:st.name,oninput:e=>st.name=e.target.value})),
     h('div',{class:'field'}, h('label',{class:'label',for:'b-born'}, 'Date of birth'), h('input',{id:'b-born',type:'date',value:st.born,oninput:e=>st.born=e.target.value})),
+    h('div',{class:'field'}, h('div',{class:'label'}, 'Photo'), photoBox),
     msg,
     h('div',{class:'actions'},
       h('button',{class:'btn ghost',onclick:closeSheet}, 'Cancel'),
@@ -732,12 +788,16 @@ function openBabySheet(baby){
         const name = st.name.trim(); if (!name) { msg.textContent = 'Enter a name.'; return; }
         closeSheet();
         await write(async () => {
-          if (baby) await updateDoc(doc(db,'babies',baby.id), {name, born: st.born||''});
-          else {
+          if (baby) {
+            if (st.photoChanged && baby.id === babyId) { photo = st.photo; render(); }
+            await updateDoc(doc(db,'babies',baby.id), {name, born: st.born||''});
+            if (st.photoChanged) await savePhoto(baby.id);
+          } else {
             const ref = await addDoc(collection(db,'babies'), {
               name, born: st.born||'', createdAt: Date.now(), createdBy: me.uid,
               members: [me.uid], invites: [], memberInfo: { [me.uid]: {name: me.name, photo: me.photo} } });
             profileSynced.add(ref.id); selectBaby(ref.id);
+            if (st.photo) { photo = st.photo; render(); await savePhoto(ref.id); }
           }
         });
       }}, 'Save')));
@@ -785,7 +845,7 @@ function openSharingSheet(baby){
       h('input',{id:'i-email',type:'email',autocomplete:'email',placeholder:'name@gmail.com',oninput:e=>st.email=e.target.value,onkeydown:e=>{ if (e.key==='Enter') invite(); }})),
     msg,
     h('div',{class:'actions'}, h('button',{class:'btn ghost',onclick:closeSheet}, 'Close'), h('button',{class:'btn sleep',onclick:invite}, 'Send invite')),
-    h('div',{class:'actions'}, h('button',{class:'btn ghost',onclick:()=>{ closeSheet(); openBabySheet(baby); }}, 'Edit name or birth date'), h('button',{class:'btn ghost',onclick:()=>{ closeSheet(); openBabySheet(null); }}, '+ Another baby')),
+    h('div',{class:'actions'}, h('button',{class:'btn ghost',onclick:()=>{ closeSheet(); openBabySheet(baby); }}, 'Edit name, birth date or photo'), h('button',{class:'btn ghost',onclick:()=>{ closeSheet(); openBabySheet(null); }}, '+ Another baby')),
     leave);
 }
 

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Baby Days</title>
-<meta name="app-version" content="3">
+<meta name="app-version" content="4">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -67,6 +67,13 @@ header h1{font-size:26px;font-weight:700;letter-spacing:-.01em}
 .chip{padding:6px 12px;border-radius:999px;background:var(--surface);border:1px solid var(--line);font-weight:600;font-size:14px}
 .chip[aria-pressed="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
 .age{font-size:13px;color:var(--muted);margin-top:2px}
+/* with a baby photo the header becomes a banner: chips top-right, name bottom-left on a dark fade */
+header.hero{flex-direction:column-reverse;align-items:stretch;justify-content:space-between;min-height:clamp(170px,46vw,240px);padding:12px 16px 16px;border-radius:var(--r);background-size:cover;background-position:center;color:#fff}
+header.hero .babies{justify-content:flex-end}
+header.hero h1{text-shadow:0 1px 8px rgba(0,0,0,.45)}
+header.hero .age{color:rgba(255,255,255,.88);text-shadow:0 1px 6px rgba(0,0,0,.5)}
+.photo-pick{display:flex;flex-direction:column;gap:8px}
+.photo-pick img{display:block;width:100%;height:150px;object-fit:cover;border-radius:12px}
 
 .status{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 @media (max-width:420px){.status{grid-template-columns:1fr}}

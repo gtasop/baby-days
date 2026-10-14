@@ -57,6 +57,15 @@ service cloud.firestore {
       match /logs/{logId} {
         allow read, write: if isMember(babyId);
       }
+
+      // The banner photo: one small JPEG data URL, shrunk on the phone before upload.
+      match /photo/{photoId} {
+        allow read, delete: if isMember(babyId);
+        allow write: if isMember(babyId)
+          && request.resource.data.keys().hasOnly(['src', 'by', 'updatedAt'])
+          && request.resource.data.src is string
+          && request.resource.data.src.size() < 900000;
+      }
     }
   }
 }
