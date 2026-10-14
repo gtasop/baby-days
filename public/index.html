@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Baby Days</title>
-<meta name="app-version" content="2">
+<meta name="app-version" content="3">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -98,7 +98,7 @@ header h1{font-size:26px;font-weight:700;letter-spacing:-.01em}
 .ic{display:inline-flex;width:20px;height:20px;flex:none}
 .ic svg{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 
-.today{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;display:flex;flex-direction:column;gap:12px}
+section.today{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;display:flex;flex-direction:column;gap:12px}
 .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .stat .v{font-family:var(--font-display);font-size:22px;font-weight:700}
 .ribbon{position:relative;height:30px;border-radius:8px;background:var(--surface-2);border:1px solid var(--line);overflow:hidden}
@@ -117,15 +117,18 @@ header h1{font-size:26px;font-weight:700;letter-spacing:-.01em}
 .tile .v{font-family:var(--font-display);font-size:22px;font-weight:700}
 .tile .k{font-size:13px;color:var(--muted)}
 .chart{display:flex;flex-direction:column;gap:6px}
-.chart .ttl{display:flex;justify-content:space-between;gap:8px;font-size:13px;font-weight:600}
+.chart .ttl{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:13px;font-weight:600}
 .chart .ttl span{font-weight:500;color:var(--muted)}
+.chart .ttl .seg{flex:none}.chart .ttl .seg button{white-space:nowrap}
 .legend{display:flex;gap:12px;font-size:12px;color:var(--muted)}
 .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
 .bars{position:relative;display:flex;align-items:flex-end;gap:3px;height:110px;border-bottom:1px solid var(--line);background:linear-gradient(var(--line),var(--line)) 0 50%/100% 1px no-repeat}
 .bars .col{flex:1;display:flex;flex-direction:column-reverse;min-width:0;height:100%}
 .bars .seg-n{background:var(--sleep);border-radius:0}
 .bars .seg-d{background:var(--sleep);opacity:.45;border-radius:3px 3px 0 0}
-.bars .seg-f{background:var(--feed);border-radius:3px 3px 0 0}
+.bars .seg-f{background:var(--feed)}
+.bars .seg-s{background:var(--solids)}
+.bars .col>:last-child{border-radius:3px 3px 0 0}
 .bars .col.today>*{opacity:.5}
 .bars .max{position:absolute;left:0;top:-2px;font-size:11px;color:var(--muted);background:var(--surface);padding-right:4px}
 .bars .mid{position:absolute;left:0;top:calc(50% - 8px);font-size:11px;color:var(--muted);background:var(--surface);padding-right:4px}
@@ -136,7 +139,7 @@ header h1{font-size:26px;font-weight:700;letter-spacing:-.01em}
 .empty p{margin:0 0 14px}
 .stack{display:flex;flex-direction:column;gap:14px}
 .note{font-size:13px;margin-top:-6px}
-.lg-n{background:var(--sleep)}.lg-d{background:var(--sleep);opacity:.45}
+.lg-n{background:var(--sleep)}.lg-d{background:var(--sleep);opacity:.45}.lg-f{background:var(--feed)}.lg-s{background:var(--solids)}
 .small{font-size:13px}
 .signin{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:28px 20px;display:flex;flex-direction:column;gap:14px;align-items:flex-start}
 .signin h2{font-size:22px}
@@ -154,9 +157,18 @@ header h1{font-size:26px;font-weight:700;letter-spacing:-.01em}
 .me-av{width:32px;height:32px;border-radius:50%;object-fit:cover;display:block}
 .link{font-weight:600;padding:6px}
 .danger-text{color:var(--danger)}
-.logs{display:flex;flex-direction:column;gap:14px}
-.day h3{font-size:15px;font-weight:700;display:flex;justify-content:space-between;gap:8px;margin-bottom:6px}
-.day h3 span{font-family:var(--font-body);font-weight:500;font-size:13px;color:var(--muted)}
+.logs{display:flex;flex-direction:column;gap:12px}
+.pager{display:grid;grid-template-columns:44px 1fr 44px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:12px}
+.pager button{height:44px;font-size:20px;font-weight:700}
+.pager button:disabled{opacity:.25;cursor:default}
+.pager span{text-align:center;font-weight:600}
+.day h3{font-size:15px;font-weight:700;margin-bottom:6px}
+.day.closed h3{margin-bottom:0}
+.dayhead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;width:100%;text-align:left;font-weight:inherit}
+button.dayhead{min-height:44px;align-items:center;padding:8px 12px;background:var(--surface);border:1px solid var(--line);border-radius:12px}
+.dayhead .sum{font-family:var(--font-body);font-weight:500;font-size:13px;color:var(--muted);text-align:right}
+.dayhead .chev{display:inline-block;width:1em;color:var(--muted)}
+.dayhead[aria-expanded="true"] .chev{transform:rotate(90deg)}
 .rows{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
 .row{display:grid;grid-template-columns:4px 64px 1fr auto;gap:12px;align-items:center;padding:10px 12px 10px 0;width:100%;text-align:left;border-top:1px solid var(--line)}
 .row:first-child{border-top:0}

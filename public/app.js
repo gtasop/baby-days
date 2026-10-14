@@ -12,7 +12,7 @@ import {
 // The page carries the styles and app.js the behaviour. A phone holding a stale cached page next to a
 // fresh app.js renders unstyled controls, so refetch the page and reload once when the versions differ.
 // Bump this together with <meta name="app-version"> in index.html whenever their markup or styles change together.
-const APP_VERSION = '2';
+const APP_VERSION = '3';
 {
   const pageVersion = document.querySelector('meta[name="app-version"]')?.content;
   let tried = null;
@@ -94,6 +94,7 @@ let unsubBabies = null, unsubInvites = null, unsubLogs = null;
 let busy = false;
 let range = +(store.get('bd.range')) === 30 ? 30 : 7;
 let tab = store.get('bd.tab') === 'trends' ? 'trends' : 'today';
+let feedView = store.get('bd.feedView') === 'ml' ? 'ml' : 'count';
 const profileSynced = new Set();
 
 function showBanner(text){ const b = $('#banner'); b.textContent = text; b.hidden = !text; }
@@ -161,6 +162,7 @@ async function signIn(){
 }
 
 function stopAll(){
+  stopWeekSub();
   [unsubBabies, unsubInvites, unsubLogs].forEach(u => u && u());
   unsubBabies = unsubInvites = unsubLogs = null;
   babies = []; invites = []; logs = [];
@@ -199,7 +201,7 @@ function subscribeLogs(keep){
   if (unsubLogs) { unsubLogs(); unsubLogs = null; }
   if (!keep) logs = [];
   if (!babyId) return;
-  unsubLogs = onSnapshot(query(logsCol(), orderBy('start','desc'), limit(1000)), snap => {
+  unsubLogs = onSnapshot(query(logsCol(), orderBy('start','desc'), limit(LOG_LIMIT)), snap => {
     logs = snap.docs.map(d => ({id:d.id, ...d.data()}));
     render();
   }, e => { console.error(e); showBanner(explain(e)); });
@@ -250,6 +252,7 @@ function removeMedicine(id){
 function selectBaby(id){
   if (id === babyId && unsubLogs) return;
   babyId = id; store.set('bd.baby', id || '');
+  weekPage = 0; medFilter = null; openDays.clear(); stopWeekSub();
   subscribeLogs(); render();
 }
 
@@ -370,32 +373,104 @@ function render(){
     main.append(h('div',{class:'empty'}, 'No entries yet. Tap Start sleep or a feed button above, or use + Add entry for something that already happened.'));
     return;
   }
-  const people = baby.memberInfo || {};
-  const groups = new Map();
-  logs.forEach(l => { const k = startOfDay(l.start); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(l); });
-  const list = h('section',{class:'logs'});
-  let shown = 0;
-  for (const [k, items] of groups) {
-    if (shown > 14) break; shown++;
-    const dSleep = items.filter(l=>l.kind==='sleep').reduce((a,l)=>a+((l.end||now)-l.start),0);
-    const dFeeds = items.filter(l=>l.kind==='feed').length;
-    const dMeds = items.filter(l=>l.kind==='med').length;
-    const rows = h('div',{class:'rows'});
-    items.forEach(l => {
-      const what = l.kind==='sleep'
-        ? h('div',{}, h('b',{}, l.end ? 'Slept '+dur(l.end-l.start) : 'Sleeping now'), l.end ? h('span',{class:'muted'}, ' · until '+hm(l.end)) : null)
-        : l.kind==='med'
-        ? h('div',{class:'medline'}, medIcon(l.medIcon), h('b',{}, l.medName || 'Medicine'))
-        : h('div',{}, h('b',{}, feedText(l)), l.end && l.feedType==='breast' ? h('span',{class:'muted'}, ' · '+dur(l.end-l.start)) : (!l.end && l.feedType==='breast' ? h('span',{class:'muted'}, ' · in progress') : null));
-      rows.append(h('button',{class:'row '+l.kind+(l.feedType==='solids'?' solids':''),onclick:()=>openLogSheet(l),'aria-label':'Edit entry'},
-        h('span',{class:'bar'}),
-        h('span',{class:'t tnum'}, hm(l.start)),
-        h('div',{class:'d'}, what, l.note ? h('div',{class:'muted'}, l.note) : null),
-        people[l.by] ? avatar(people[l.by]) : h('span')));
-    });
-    list.append(h('div',{class:'day'}, h('h3',{}, dayLabel(+k), h('span',{class:'tnum'}, dur(dSleep)+' sleep · '+dFeeds+' feeds'+(dMeds ? ' · '+dMeds+' med'+(dMeds>1?'s':'') : ''))), rows));
+  main.append(logsSection(baby, now));
+}
+
+// ---------- log list ----------
+// One 7-day page at a time (page 0 ends today). Past days start collapsed; today stays open.
+const LOG_LIMIT = 1000;
+let weekPage = 0, medFilter = null;
+const openDays = new Set();
+// a week older than what the main listener holds gets a listener of its own
+let weekSub = null;
+function stopWeekSub(){ if (weekSub) { weekSub.unsub(); weekSub = null; } }
+function weekBounds(page){
+  const e = new Date(startOfDay(Date.now())); e.setDate(e.getDate() + 1 - 7*page);
+  const s = new Date(e); s.setDate(s.getDate() - 7);
+  return [s.getTime(), e.getTime()];
+}
+// null while an older week is still loading
+function weekLogs(s, e){
+  const oldest = logs.length ? logs[logs.length-1].start : Infinity;
+  if (logs.length < LOG_LIMIT || s >= oldest) { stopWeekSub(); return logs.filter(l => l.start >= s && l.start < e); }
+  const key = babyId+':'+s;
+  if (weekSub?.key !== key) {
+    stopWeekSub();
+    const sub = weekSub = {key, logs: null};
+    sub.unsub = onSnapshot(query(logsCol(), where('start','>=',s), where('start','<',e), orderBy('start','desc')), snap => {
+      sub.logs = snap.docs.map(d => ({id:d.id, ...d.data()}));
+      render();
+    }, err => { console.error(err); showBanner(explain(err)); });
   }
-  main.append(list);
+  return weekSub.logs;
+}
+
+function logsSection(baby, now){
+  const people = baby.memberInfo || {};
+  const [s, e] = weekBounds(weekPage);
+  const fmtDay = t => new Date(t).toLocaleDateString(undefined,{day:'numeric',month:'short'});
+  const oldest = Math.min(logs.length ? logs[logs.length-1].start : Infinity, baby.createdAt || Infinity);
+  const hasOlder = logs.length >= LOG_LIMIT ? s > oldest : oldest < s;
+  const go = n => { weekPage = n; render(); };
+  const pager = h('div',{class:'pager'},
+    h('button',{type:'button','aria-label':'Previous week',disabled:!hasOlder,onclick:()=>go(weekPage+1)}, '‹'),
+    h('span',{'aria-live':'polite'}, weekPage === 0 ? 'Last 7 days' : fmtDay(s)+' – '+fmtDay(e-DAY)),
+    h('button',{type:'button','aria-label':'Next week',disabled:weekPage===0,onclick:()=>go(weekPage-1)}, '›'));
+
+  // medicines to filter by: the saved ones plus any only found on older entries
+  const choices = new Map();
+  (baby.medicines||[]).forEach(m => choices.set(m.id, m));
+  logs.forEach(l => { if (l.kind==='med' && l.medId && !choices.has(l.medId)) choices.set(l.medId, {id:l.medId, name:l.medName||'Medicine', icon:l.medIcon}); });
+  if (medFilter && !choices.has(medFilter)) medFilter = null;
+  const picked = medFilter && choices.get(medFilter);
+  const filter = choices.size ? h('div',{class:'field'}, h('div',{class:'label'}, 'Filter by medicine'),
+    h('div',{class:'chips'},
+      h('button',{type:'button','aria-pressed':String(!medFilter),onclick:()=>{ medFilter = null; render(); }}, 'All entries'),
+      [...choices.values()].map(m => h('button',{type:'button','aria-pressed':String(medFilter===m.id),onclick:()=>{ medFilter = medFilter===m.id ? null : m.id; render(); }}, medIcon(m.icon), m.name)))) : null;
+
+  const list = h('section',{class:'logs'}, pager, filter);
+  let items = weekLogs(s, e);
+  if (!items) { list.append(h('div',{class:'empty'}, 'Loading this week…')); return list; }
+  if (picked) items = items.filter(l => l.kind==='med' && l.medId===medFilter);
+  if (!items.length) { list.append(h('div',{class:'empty'}, picked ? 'No '+picked.name+' in these 7 days.' : 'No entries in these 7 days.')); return list; }
+
+  const groups = new Map();
+  items.forEach(l => { const k = startOfDay(l.start); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(l); });
+  const today0 = startOfDay(now);
+  for (const [k, dayItems] of groups) {
+    const isToday = k === today0, open = isToday || openDays.has(k);
+    let sum;
+    if (picked) sum = dayItems.length+' '+(dayItems.length===1 ? 'dose' : 'doses');
+    else {
+      const dSleep = dayItems.filter(l=>l.kind==='sleep').reduce((a,l)=>a+((l.end||now)-l.start),0);
+      const dFeeds = dayItems.filter(l=>l.kind==='feed').length;
+      const dMeds = dayItems.filter(l=>l.kind==='med').length;
+      sum = dur(dSleep)+' sleep · '+dFeeds+' feeds'+(dMeds ? ' · '+dMeds+' med'+(dMeds>1?'s':'') : '');
+    }
+    const head = isToday
+      ? h('div',{class:'dayhead'}, h('span',{}, dayLabel(k)), h('span',{class:'sum tnum'}, sum))
+      : h('button',{type:'button',class:'dayhead','aria-expanded':String(open),onclick:()=>{ open ? openDays.delete(k) : openDays.add(k); render(); }},
+          h('span',{}, h('span',{class:'chev','aria-hidden':'true'}, '›'), dayLabel(k)), h('span',{class:'sum tnum'}, sum));
+    const day = h('div',{class:'day'+(open?'':' closed')}, h('h3',{}, head));
+    if (open) {
+      const rows = h('div',{class:'rows'});
+      dayItems.forEach(l => {
+        const what = l.kind==='sleep'
+          ? h('div',{}, h('b',{}, l.end ? 'Slept '+dur(l.end-l.start) : 'Sleeping now'), l.end ? h('span',{class:'muted'}, ' · until '+hm(l.end)) : null)
+          : l.kind==='med'
+          ? h('div',{class:'medline'}, medIcon(l.medIcon), h('b',{}, l.medName || 'Medicine'))
+          : h('div',{}, h('b',{}, feedText(l)), l.end && l.feedType==='breast' ? h('span',{class:'muted'}, ' · '+dur(l.end-l.start)) : (!l.end && l.feedType==='breast' ? h('span',{class:'muted'}, ' · in progress') : null));
+        rows.append(h('button',{class:'row '+l.kind+(l.feedType==='solids'?' solids':''),onclick:()=>openLogSheet(l),'aria-label':'Edit entry'},
+          h('span',{class:'bar'}),
+          h('span',{class:'t tnum'}, hm(l.start)),
+          h('div',{class:'d'}, what, l.note ? h('div',{class:'muted'}, l.note) : null),
+          people[l.by] ? avatar(people[l.by]) : h('span')));
+      });
+      day.append(rows);
+    }
+    list.append(day);
+  }
+  return list;
 }
 
 // ---------- trends ----------
@@ -406,7 +481,7 @@ function trendsSection(sleeps, feeds, now){
   for (let i = range-1; i >= 0; i--) {
     const d = new Date(today0); d.setDate(d.getDate()-i);
     const s = d.getTime(); const e2 = new Date(s); e2.setDate(e2.getDate()+1); const e = e2.getTime();
-    const day = {s, e, night:0, dayS:0, feeds:0, ml:0, today: i===0};
+    const day = {s, e, night:0, dayS:0, feeds:0, milk:0, solids:0, ml:0, today: i===0};
     const d7 = s + 7*HOUR, d19 = s + 19*HOUR; // night = 19:00–07:00
     sleeps.forEach(l => {
       const a = l.start, b = Math.min(l.end || now, now);
@@ -414,7 +489,12 @@ function trendsSection(sleeps, feeds, now){
       const total = overlap(a,b,s,e), dayPart = overlap(a,b,d7,d19);
       day.dayS += dayPart; day.night += total - dayPart;
     });
-    feeds.forEach(l => { if (l.start >= s && l.start < e) { day.feeds++; if (l.feedType==='bottle') day.ml += (+l.amountMl||0); } });
+    feeds.forEach(l => {
+      if (l.start < s || l.start >= e) return;
+      day.feeds++;
+      if (l.feedType==='solids') day.solids++; else day.milk++;
+      if (l.feedType==='bottle') day.ml += (+l.amountMl||0);
+    });
     days.push(day);
   }
   const all = [...sleeps, ...feeds];
@@ -425,7 +505,7 @@ function trendsSection(sleeps, feeds, now){
   const n = basis.length;
   const avg = f => basis.reduce((a,d)=>a+f(d),0) / n;
   const avgSleep = avg(d => d.night + d.dayS), avgNight = avg(d => d.night), avgDay = avg(d => d.dayS);
-  const avgFeeds = avg(d => d.feeds), avgMl = avg(d => d.ml);
+  const avgFeeds = avg(d => d.feeds), avgMilk = avg(d => d.milk), avgSolids = avg(d => d.solids), avgMl = avg(d => d.ml);
 
   const from = days[0].s;
   const done = sleeps.filter(l => l.end && l.start >= from);
@@ -439,9 +519,10 @@ function trendsSection(sleeps, feeds, now){
 
   const tile = (v, k) => h('div',{class:'tile'}, h('div',{class:'v tnum'}, v), h('div',{class:'k'}, k));
   const fmtDate = t => new Date(t).toLocaleDateString(undefined,{day:'numeric',month:'short'});
+  const num = v => v.toFixed(1).replace(/\.0$/,'');
   const tiles = h('div',{class:'tiles'},
     tile(dur(avgSleep), `sleep per day · ${dur(avgNight)} night, ${dur(avgDay)} day`),
-    tile(avgFeeds ? avgFeeds.toFixed(1).replace(/\.0$/,'') : '0', 'feeds per day' + (avgMl ? ` · ${Math.round(avgMl)} ml bottle` : '')),
+    tile(num(avgFeeds), 'feeds per day' + (avgFeeds ? ` · ${num(avgMilk)} milk, ${num(avgSolids)} solids` : '') + (avgMl ? ` · ${Math.round(avgMl)} ml` : '')),
     tile(longest ? dur(longest.end-longest.start) : '—', longest ? 'longest sleep · '+fmtDate(longest.start)+', '+hm(longest.start) : 'longest sleep'),
     tile(medGap ? dur(medGap) : '—', 'typical time between feeds' + (naps.length ? ` · naps ${dur(avgNap)} avg` : '')));
 
@@ -457,10 +538,22 @@ function trendsSection(sleeps, feeds, now){
     h('div',{class:'seg-n',style:`height:${d.night/HOUR/maxSleepH*100}%`}),
     h('div',{class:'seg-d',style:`height:${d.dayS/HOUR/maxSleepH*100}%`}))));
 
-  const maxF = Math.max(4, Math.ceil(Math.max(...days.map(d => d.feeds)) / 2) * 2);
-  const feedBars = h('div',{class:'bars',role:'img','aria-label':'Feeds per day'}, h('span',{class:'max tnum'}, maxF), h('span',{class:'mid tnum'}, maxF/2));
-  days.forEach(d => feedBars.append(h('div',{class:'col'+(d.today?' today':''),title:`${fmtDate(d.s)}: ${d.feeds} feeds${d.ml?', '+d.ml+' ml bottle':''}`},
-    h('div',{class:'seg-f',style:`height:${d.feeds/maxF*100}%`}))));
+  // feeds per day: milk and solids stacked, or millilitres of bottle milk
+  let feedBars, feedLegend;
+  if (feedView === 'ml') {
+    const maxMl = Math.max(400, Math.ceil(Math.max(...days.map(d => d.ml)) / 200) * 200);
+    feedBars = h('div',{class:'bars',role:'img','aria-label':'Bottle milk per day in ml'}, h('span',{class:'max tnum'}, maxMl+' ml'), h('span',{class:'mid tnum'}, (maxMl/2)+' ml'));
+    days.forEach(d => feedBars.append(h('div',{class:'col'+(d.today?' today':''),title:`${fmtDate(d.s)}: ${d.ml} ml from bottles`},
+      h('div',{class:'seg-f',style:`height:${d.ml/maxMl*100}%`}))));
+    feedLegend = h('div',{class:'legend'}, h('span',{}, h('i',{class:'lg-f'}), 'Bottle milk'), h('span',{}, 'today is faded until the day ends'));
+  } else {
+    const maxF = Math.max(4, Math.ceil(Math.max(...days.map(d => d.feeds)) / 2) * 2);
+    feedBars = h('div',{class:'bars',role:'img','aria-label':'Feeds per day, milk and solids'}, h('span',{class:'max tnum'}, maxF), h('span',{class:'mid tnum'}, maxF/2));
+    days.forEach(d => feedBars.append(h('div',{class:'col'+(d.today?' today':''),title:`${fmtDate(d.s)}: ${d.milk} milk, ${d.solids} solids`},
+      h('div',{class:'seg-f',style:`height:${d.milk/maxF*100}%`}),
+      d.solids ? h('div',{class:'seg-s',style:`height:${d.solids/maxF*100}%`}) : null)));
+    feedLegend = h('div',{class:'legend'}, h('span',{}, h('i',{class:'lg-f'}), 'Milk'), h('span',{}, h('i',{class:'lg-s'}), 'Solids'), h('span',{}, 'today is faded'));
+  }
 
   return h('section',{class:'trends'},
     h('div',{class:'head'}, h('div',{class:'label'}, 'Trends'),
@@ -470,7 +563,10 @@ function trendsSection(sleeps, feeds, now){
               : `Daily averages over ${n} full ${n===1?'day':'days'}${n < range ? ' (since you started logging)' : ''}. Night is 19:00–07:00.`),
     tiles,
     h('div',{class:'chart'}, h('div',{class:'ttl'}, 'Sleep per day', h('div',{class:'legend'}, h('span',{}, h('i',{class:'lg-n'}), 'Night'), h('span',{}, h('i',{class:'lg-d'}), 'Day'))), sleepBars, xlab()),
-    h('div',{class:'chart'}, h('div',{class:'ttl'}, 'Feeds per day', h('span',{}, 'today is faded until the day ends')), feedBars, xlab()));
+    h('div',{class:'chart'},
+      h('div',{class:'ttl'}, feedView === 'ml' ? 'Milk per day' : 'Feeds per day',
+        seg([['count','Feeds'],['ml','Milk (ml)']], feedView, v => { feedView = v; store.set('bd.feedView', v); render(); })),
+      feedLegend, feedBars, xlab()));
 }
 
 // ---------- sheets ----------
